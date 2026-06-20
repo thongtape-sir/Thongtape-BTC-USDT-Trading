@@ -1,11 +1,15 @@
 const state = {
-  side: "BUY",
   liveTradingEnabled: false,
   baseAsset: "BTC",
   quoteAsset: "USDT",
   chartInterval: "1m",
   candles: [],
   chartViewCount: 160,
+  levels: {
+    support: null,
+    resistance: null,
+    current: null,
+  },
 };
 
 const $ = (id) => document.getElementById(id);
@@ -46,18 +50,16 @@ async function loadHealth() {
   state.liveTradingEnabled = health.liveTradingEnabled;
   state.baseAsset = health.baseAsset || "BTC";
   state.quoteAsset = health.quoteAsset || "USDT";
+
   if (health.manualLiveTradingEnabled) {
     $("tradingStatus").textContent = "Manual live on";
     $("tradingStatus").className = "pill danger";
-    $("orderMode").textContent = "Manual live";
   } else if (health.aiLiveOrdersEnabled) {
     $("tradingStatus").textContent = "Manual off · AI live on";
     $("tradingStatus").className = "pill warning";
-    $("orderMode").textContent = "Manual dry-run";
   } else {
     $("tradingStatus").textContent = "Live trading off";
     $("tradingStatus").className = "pill warning";
-    $("orderMode").textContent = "Dry-run";
   }
 }
 
@@ -72,26 +74,26 @@ async function loadMarket() {
     $("priceChange").textContent = `${change >= 0 ? "+" : ""}${change.toFixed(2)}% 24h`;
     $("priceChange").className = change >= 0 ? "ok-text" : "danger-text";
     renderSignal(market.signal);
-    setStatus("เชื่อมต่อแล้ว", "ok");
+    setStatus("Connected", "ok");
   } catch (error) {
     setStatus(error.message, "danger");
   }
 }
 
 async function loadAccount() {
-  $("accountMessage").textContent = "กำลังโหลดพอร์ต...";
+  $("accountMessage").textContent = "Loading portfolio...";
   try {
     const account = await api("/api/account");
-    const base = account.base || account.eth;
+    const base = account.base || account.eth || {};
     $("ethQty").textContent = formatNumber(base.quantity, 8);
     $("ethValue").textContent = formatUsd(base.valueUsdt);
-    $("usdtQty").textContent = formatNumber(account.usdt.quantity, 2);
-    $("portfolioValue").textContent = formatUsd(account.portfolio.trackedValueUsdt);
-    $("realizedPnl").textContent = formatUsd(account.pnl.realizedUsdt);
-    $("unrealizedPnl").textContent = formatUsd(account.pnl.unrealizedUsdt);
-    $("totalPnl").textContent = formatUsd(account.pnl.totalUsdt);
-    $("pnlWarning").textContent = account.pnl.warning;
-    $("accountMessage").textContent = account.portfolio.note;
+    $("usdtQty").textContent = formatNumber(account.usdt?.quantity, 2);
+    $("portfolioValue").textContent = formatUsd(account.portfolio?.trackedValueUsdt);
+    $("realizedPnl").textContent = formatUsd(account.pnl?.realizedUsdt);
+    $("unrealizedPnl").textContent = formatUsd(account.pnl?.unrealizedUsdt);
+    $("totalPnl").textContent = formatUsd(account.pnl?.totalUsdt);
+    $("pnlWarning").textContent = account.pnl?.warning || "";
+    $("accountMessage").textContent = account.portfolio?.note || "";
   } catch (error) {
     $("accountMessage").textContent = error.message;
   }
@@ -117,14 +119,16 @@ function renderOrderHistory(payload) {
 
   $("historyRows").innerHTML = "";
   if (!orders.length) {
-    $("historyRows").innerHTML = '<tr><td colspan="7">ยังไม่มี order history</td></tr>';
+    $("historyRows").innerHTML = '<tr><td colspan="7">No order history yet</td></tr>';
     return;
   }
 
   orders.slice(0, 80).forEach((order) => {
     const row = document.createElement("tr");
     const orderBaseAsset = baseAssetFromSymbol(order.symbol) || state.baseAsset;
-    const amount = order.quoteOrderQty ? `${formatNumber(order.quoteOrderQty, 2)} ${state.quoteAsset}` : `${formatNumber(order.quantity, 8)} ${orderBaseAsset}`;
+    const amount = order.quoteOrderQty
+      ? `${formatNumber(order.quoteOrderQty, 2)} ${state.quoteAsset}`
+      : `${formatNumber(order.quantity, 8)} ${orderBaseAsset}`;
     const executed = order.executedQty
       ? `${formatNumber(order.executedQty, 8)} ${orderBaseAsset} / ${formatUsd(order.cummulativeQuoteQty, 2)}`
       : "--";
@@ -166,8 +170,16 @@ function renderSignal(signal) {
   $("stopLoss").textContent = formatUsd(plan.stopLoss, 2);
   $("takeProfit1").textContent = formatUsd(plan.takeProfit1, 2);
   $("takeProfit2").textContent = formatUsd(plan.takeProfit2, 2);
+  $("supportLevel").textContent = formatUsd(plan.support, 2);
+  $("resistanceLevel").textContent = formatUsd(plan.resistance, 2);
+  $("currentPriceLevel").textContent = formatUsd(plan.currentPrice, 2);
+  state.levels = {
+    support: Number.isFinite(Number(plan.support)) ? Number(plan.support) : null,
+    resistance: Number.isFinite(Number(plan.resistance)) ? Number(plan.resistance) : null,
+    current: Number.isFinite(Number(plan.currentPrice)) ? Number(plan.currentPrice) : null,
+  };
   $("riskReward").textContent = plan.riskRewardToTp1
-    ? `Risk/Reward ถึง TP1 ประมาณ ${plan.riskRewardToTp1}:1 · แนวรับ ${formatUsd(plan.support, 2)} · แนวต้าน ${formatUsd(plan.resistance, 2)}`
+    ? `Risk/Reward to TP1 ~ ${plan.riskRewardToTp1}:1 · Support ${formatUsd(plan.support, 2)} · Resistance ${formatUsd(plan.resistance, 2)}`
     : "";
 
   $("signalReasons").innerHTML = "";
@@ -182,6 +194,73 @@ function renderSignal(signal) {
   $("ma30Value").textContent = `MA30 ${formatUsd(indicators.ma30, 2)}`;
   $("ma99Value").textContent = `MA99 ${formatUsd(indicators.ma99, 2)}`;
   $("atrValue").textContent = `ATR ${formatUsd(indicators.atr14, 2)}`;
+  drawCandles();
+}
+
+async function loadBotConfig() {
+  try {
+    const config = await api("/api/bot/config");
+    renderBotConfig(config);
+  } catch (error) {
+    $("botRulesMessage").textContent = error.message;
+  }
+}
+
+function renderBotConfig(config) {
+  $("botEnabled").checked = Boolean(config.enabled);
+  $("botDryRunOnly").checked = Boolean(config.dryRunOnly);
+  $("botAllowBuy").checked = Boolean(config.allowBuy);
+  $("botAllowSell").checked = Boolean(config.allowSell);
+  $("botMinConfidence").value = Math.round(Number(config.minConfidence || 0) * 100);
+  $("botBuyBuffer").value = config.buyBelowResistancePct ?? 0.35;
+  $("botSellBuffer").value = config.sellAboveSupportPct ?? 0.35;
+  $("botOrderUsdt").value = config.orderUsdt ?? 10;
+  $("botSellQtyBtc").value = config.sellQtyBtc ?? 0.0001;
+  $("botDailyBudget").value = config.dailyBudgetUsdt ?? 25;
+  updateBotMode();
+  $("botRulesMessage").textContent = "Rules loaded. .env safety limits still apply.";
+}
+
+function collectBotConfig() {
+  return {
+    enabled: $("botEnabled").checked,
+    dryRunOnly: $("botDryRunOnly").checked,
+    allowBuy: $("botAllowBuy").checked,
+    allowSell: $("botAllowSell").checked,
+    minConfidence: Number($("botMinConfidence").value) / 100,
+    buyBelowResistancePct: Number($("botBuyBuffer").value),
+    sellAboveSupportPct: Number($("botSellBuffer").value),
+    orderUsdt: Number($("botOrderUsdt").value),
+    sellQtyBtc: Number($("botSellQtyBtc").value),
+    dailyBudgetUsdt: Number($("botDailyBudget").value),
+  };
+}
+
+async function saveBotConfig() {
+  $("botRulesMessage").textContent = "Saving rules...";
+  try {
+    const saved = await api("/api/bot/config", {
+      method: "PUT",
+      body: JSON.stringify(collectBotConfig()),
+    });
+    renderBotConfig(saved);
+    $("botRulesMessage").textContent = "Bot Rules saved.";
+  } catch (error) {
+    $("botRulesMessage").textContent = error.message;
+  }
+}
+
+function updateBotMode() {
+  if (!$("botEnabled").checked) {
+    $("botMode").textContent = "Disabled";
+    $("botMode").className = "small-label warning";
+  } else if ($("botDryRunOnly").checked) {
+    $("botMode").textContent = "Dry-run";
+    $("botMode").className = "small-label warning";
+  } else {
+    $("botMode").textContent = "Live-ready";
+    $("botMode").className = "small-label danger";
+  }
 }
 
 async function loadCandles() {
@@ -202,7 +281,7 @@ async function loadCandles() {
 
 function renderChartMeta(symbol = "BTCUSDT", interval = state.chartInterval) {
   const visible = Math.min(state.chartViewCount, state.candles.length);
-  $("chartMeta").textContent = `${symbol} · ${interval} · ${visible}/${state.candles.length} candles · wheel หรือปุ่ม +/- เพื่อซูม`;
+  $("chartMeta").textContent = `${symbol} · ${interval} · ${visible}/${state.candles.length} candles · wheel or +/- to zoom`;
 }
 
 function zoomChart(multiplier) {
@@ -246,7 +325,10 @@ function drawCandles() {
   const chartHeight = chartBottom - pad.top;
   const chartWidth = width - pad.left - pad.right;
 
-  const priceValues = candles.flatMap((item) => [item.high, item.low, item.close, item.ma7, item.ma30, item.ma99].filter(Number.isFinite));
+  const levelValues = [state.levels.support, state.levels.resistance].filter(Number.isFinite);
+  const priceValues = candles
+    .flatMap((item) => [item.high, item.low, item.close, item.ma7, item.ma30, item.ma99].filter(Number.isFinite))
+    .concat(levelValues);
   const volumes = candles.map((item) => item.volume);
   const minPrice = Math.min(...priceValues);
   const maxPrice = Math.max(...priceValues);
@@ -269,6 +351,8 @@ function drawCandles() {
   drawLine(ctx, candles, "ma7", xFor, yFor, "#b46b07", 1.7);
   drawLine(ctx, candles, "ma30", xFor, yFor, "#7c3aed", 1.7);
   drawLine(ctx, candles, "ma99", xFor, yFor, "#111827", 1.8);
+  drawLevel(ctx, yFor, width, pad, state.levels.support, "#12805c", "Support");
+  drawLevel(ctx, yFor, width, pad, state.levels.resistance, "#c2415b", "Resistance");
   drawTimeLabels(ctx, candles, pad, width, height);
   drawLastPrice(ctx, candles[candles.length - 1], yFor, width, pad);
 }
@@ -345,6 +429,22 @@ function drawLine(ctx, candles, key, xFor, yFor, color, lineWidth) {
   if (hasPoint) ctx.stroke();
 }
 
+function drawLevel(ctx, yFor, width, pad, value, color, label) {
+  if (!Number.isFinite(value)) return;
+  const y = yFor(value);
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = 1.4;
+  ctx.setLineDash([7, 5]);
+  ctx.beginPath();
+  ctx.moveTo(pad.left, y);
+  ctx.lineTo(width - pad.right + 8, y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.font = "12px Segoe UI, Tahoma, sans-serif";
+  ctx.fillText(label, pad.left + 8, y - 6);
+}
+
 function drawTimeLabels(ctx, candles, pad, width, height) {
   const first = candles[0];
   const last = candles[candles.length - 1];
@@ -383,51 +483,14 @@ function formatChartTime(value) {
   }).format(date);
 }
 
-function setSide(side) {
-  state.side = side;
-  $("buyTab").classList.toggle("active", side === "BUY");
-  $("sellTab").classList.toggle("active", side === "SELL");
-  $("buyField").classList.toggle("hidden", side !== "BUY");
-  $("sellField").classList.toggle("hidden", side !== "SELL");
-}
-
-async function submitOrder() {
-  const dryRun = $("dryRunToggle").checked;
-  const payload = {
-    side: state.side,
-    type: "MARKET",
-    dryRun,
-    confirm: $("confirmText").value,
-    source: "manual",
-  };
-
-  if (state.side === "BUY") {
-    payload.quoteOrderQty = Number($("quoteOrderQty").value);
-  } else {
-    payload.quantity = Number($("ethOrderQty").value);
-  }
-
-  $("orderResult").textContent = "กำลังส่งคำขอ...";
-  try {
-    const result = await api("/api/orders", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-    $("orderResult").textContent = JSON.stringify(result, null, 2);
-    await loadAccount();
-    await loadOrderHistory();
-  } catch (error) {
-    $("orderResult").textContent = error.message;
-  }
-}
-
 function bindEvents() {
   $("refreshAccount").addEventListener("click", loadAccount);
   $("refreshHistory").addEventListener("click", loadOrderHistory);
   $("refreshSignal").addEventListener("click", loadMarket);
-  $("buyTab").addEventListener("click", () => setSide("BUY"));
-  $("sellTab").addEventListener("click", () => setSide("SELL"));
-  $("submitOrder").addEventListener("click", submitOrder);
+  $("saveBotRules").addEventListener("click", saveBotConfig);
+  ["botEnabled", "botDryRunOnly"].forEach((id) => {
+    $(id).addEventListener("change", updateBotMode);
+  });
   $("zoomIn").addEventListener("click", () => zoomChart(0.72));
   $("zoomOut").addEventListener("click", () => zoomChart(1.35));
   $("zoomReset").addEventListener("click", resetZoom);
@@ -457,7 +520,7 @@ async function boot() {
   bindEvents();
   if (window.lucide) window.lucide.createIcons();
   await loadHealth();
-  await Promise.all([loadMarket(), loadCandles(), loadAccount(), loadOrderHistory()]);
+  await Promise.all([loadMarket(), loadCandles(), loadAccount(), loadOrderHistory(), loadBotConfig()]);
   setInterval(loadMarket, 15000);
   setInterval(loadCandles, 60000);
 }

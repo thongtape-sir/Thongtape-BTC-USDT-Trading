@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .binance_client import BinanceClient, BinanceError, d, money
+from .bot_config import BotConfig, read_bot_config, write_bot_config
 from .order_history import ai_spent_today_usdt, append_history, extract_execution, read_history, summarize_history
 from .signal_engine import build_signal
 
@@ -37,11 +38,22 @@ def env_decimal(name: str, default: str) -> Decimal:
     return Decimal(os.getenv(name, default))
 
 
+def bot_config_defaults() -> dict[str, Any]:
+    return {
+        "enabled": env_bool("ALLOW_AI_LIVE_ORDERS"),
+        "dryRunOnly": not env_bool("ALLOW_AI_LIVE_ORDERS"),
+        "orderUsdt": float(env_decimal("AI_ORDER_USDT", "10")),
+        "sellQtyBtc": float(env_decimal("AI_ORDER_BTC_QTY", "0.0001")),
+        "dailyBudgetUsdt": float(env_decimal("AI_DAILY_BUDGET_USDT", "25")),
+    }
+
+
 def make_client() -> BinanceClient:
     return BinanceClient(
         api_key=os.getenv("BINANCE_API_KEY"),
         secret_key=os.getenv("BINANCE_SECRET_KEY"),
         env=os.getenv("BINANCE_ENV", "live"),
+        provider=os.getenv("BINANCE_PROVIDER", "binance_th"),
         base_url=os.getenv("BINANCE_BASE_URL") or None,
         public_base_url=os.getenv("BINANCE_PUBLIC_BASE_URL") or None,
     )
@@ -57,7 +69,7 @@ class OrderRequest(BaseModel):
     source: Literal["manual", "ai"] = "manual"
 
 
-app = FastAPI(title="BTC Binance Monitor")
+app = FastAPI(title="BTC Binance TH Monitor")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
@@ -73,6 +85,7 @@ async def health() -> dict[str, Any]:
         "symbol": SYMBOL,
         "baseAsset": BASE_ASSET,
         "quoteAsset": QUOTE_ASSET,
+        "binanceProvider": client.provider,
         "binanceEnv": client.env,
         "binanceBaseUrl": client.base_url,
         "binancePublicBaseUrl": client.public_base_url,
@@ -87,6 +100,7 @@ async def health() -> dict[str, Any]:
         "aiOrderBaseQty": float(env_decimal("AI_ORDER_BTC_QTY", "0.0001")),
         "aiOrderBtcQty": float(env_decimal("AI_ORDER_BTC_QTY", "0.0001")),
         "aiDailyBudgetUsdt": float(env_decimal("AI_DAILY_BUDGET_USDT", "25")),
+        "botConfig": read_bot_config(bot_config_defaults()).model_dump(),
     }
 
 
@@ -94,9 +108,9 @@ async def health() -> dict[str, Any]:
 async def market() -> dict[str, Any]:
     client = make_client()
     try:
-        ticker = await client.public_get("/api/v3/ticker/24hr", {"symbol": SYMBOL})
+        ticker = await client.public_get(client.endpoints["ticker_24hr"], {"symbol": SYMBOL})
         klines = await client.public_get(
-            "/api/v3/klines",
+            client.endpoints["klines"],
             {"symbol": SYMBOL, "interval": "1h", "limit": 120},
         )
     except BinanceError as exc:
@@ -127,7 +141,7 @@ async def candles(
     client = make_client()
     try:
         klines = await client.public_get(
-            "/api/v3/klines",
+            client.endpoints["klines"],
             {"symbol": SYMBOL, "interval": interval, "limit": limit},
         )
     except BinanceError as exc:
@@ -161,14 +175,14 @@ async def account() -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="ยังไม่ได้ตั้งค่า Binance API key ในไฟล์ .env")
 
     try:
-        account_payload = await client.signed_request("GET", "/api/v3/account")
-        ticker = await client.public_get("/api/v3/ticker/price", {"symbol": SYMBOL})
-        trades = await client.signed_request("GET", "/api/v3/myTrades", {"symbol": SYMBOL, "limit": 1000})
+        account_payload = await client.signed_request("GET", client.endpoints["account"])
+        ticker = await client.public_get(client.endpoints["ticker_price"], {"symbol": SYMBOL})
+        trades = await client.signed_request("GET", client.endpoints["my_trades"], {"symbol": SYMBOL, "limit": 1000})
     except BinanceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     base_price = d(ticker.get("price"))
-    balances = account_payload.get("balances", [])
+    balances = account_payload.get("balances") or account_payload.get("assets") or account_payload.get("accountAssets") or []
     non_zero = []
     base_total = Decimal("0")
     quote_total = Decimal("0")
@@ -226,7 +240,25 @@ async def ai_signal() -> dict[str, Any]:
 
 @app.post("/api/ai/execute")
 async def execute_ai_order(dryRun: bool = True) -> dict[str, Any]:
+    bot_config = read_bot_config(bot_config_defaults())
     signal = await ai_signal()
+    bot_gate = evaluate_bot_rules(signal, bot_config)
+    if not bot_gate["allowed"]:
+        append_history(
+            {
+                "source": "ai",
+                "status": "blocked",
+                "reason": bot_gate["reason"],
+                "symbol": SYMBOL,
+                "side": signal.get("decision", "WAIT"),
+                "type": "MARKET",
+                "dryRun": True,
+                "signal": signal,
+                "botConfig": bot_config.model_dump(),
+            }
+        )
+        return {"status": "blocked", "reason": bot_gate["reason"], "signal": signal, "botConfig": bot_config.model_dump()}
+
     side = signal.get("decision", "WAIT")
     if side == "WAIT":
         append_history(
@@ -247,8 +279,8 @@ async def execute_ai_order(dryRun: bool = True) -> dict[str, Any]:
         order = OrderRequest(
             side="BUY",
             type="MARKET",
-            quoteOrderQty=env_decimal("AI_ORDER_USDT", "10"),
-            dryRun=dryRun,
+            quoteOrderQty=Decimal(str(bot_config.orderUsdt)),
+            dryRun=dryRun or bot_config.dryRunOnly,
             confirm=CONFIRM_TEXT if not dryRun else "",
             source="ai",
         )
@@ -256,12 +288,34 @@ async def execute_ai_order(dryRun: bool = True) -> dict[str, Any]:
         order = OrderRequest(
             side="SELL",
             type="MARKET",
-            quantity=env_decimal("AI_ORDER_BTC_QTY", "0.0001"),
-            dryRun=dryRun,
+            quantity=Decimal(str(bot_config.sellQtyBtc)),
+            dryRun=dryRun or bot_config.dryRunOnly,
             confirm=CONFIRM_TEXT if not dryRun else "",
             source="ai",
         )
     return await create_order(order)
+
+
+@app.get("/api/bot/config")
+async def get_bot_config() -> dict[str, Any]:
+    return read_bot_config(bot_config_defaults()).model_dump()
+
+
+@app.put("/api/bot/config")
+async def update_bot_config(config: BotConfig) -> dict[str, Any]:
+    max_usdt = float(env_decimal("MAX_ORDER_USDT", "25"))
+    max_btc_qty = float(env_decimal("MAX_BTC_QTY", "0.0002"))
+    max_daily_budget = float(env_decimal("AI_DAILY_BUDGET_USDT", "25"))
+
+    if config.orderUsdt > max_usdt:
+        raise HTTPException(status_code=400, detail=f"Order USDT must be <= MAX_ORDER_USDT ({max_usdt})")
+    if config.sellQtyBtc > max_btc_qty:
+        raise HTTPException(status_code=400, detail=f"Sell BTC qty must be <= MAX_BTC_QTY ({max_btc_qty})")
+    if config.dailyBudgetUsdt > max_daily_budget:
+        raise HTTPException(status_code=400, detail=f"Daily budget must be <= AI_DAILY_BUDGET_USDT ({max_daily_budget})")
+
+    saved = write_bot_config(config)
+    return saved.model_dump()
 
 
 @app.get("/api/orders/history")
@@ -269,7 +323,7 @@ async def order_history() -> dict[str, Any]:
     client = make_client()
     current_price: Decimal | None = None
     try:
-        ticker = await client.public_get("/api/v3/ticker/price", {"symbol": SYMBOL})
+        ticker = await client.public_get(client.endpoints["ticker_price"], {"symbol": SYMBOL})
         current_price = d(ticker.get("price"))
     except BinanceError:
         current_price = None
@@ -317,7 +371,7 @@ async def create_order(order: OrderRequest) -> dict[str, Any]:
         )
 
     try:
-        result = await client.signed_request("POST", "/api/v3/order", params)
+        result = await client.signed_request("POST", client.endpoints["order"], params)
     except BinanceError as exc:
         append_history(history_entry(order, "failed", params, str(exc)))
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -338,8 +392,15 @@ async def validate_order(order: OrderRequest) -> dict[str, Any]:
     params = build_order_params(order)
     await enforce_order_limits(client, order, should_dry_run=False)
     await enforce_ai_budget(order, params)
+    test_order_endpoint = client.endpoints.get("test_order")
+    if not test_order_endpoint:
+        return {
+            "status": "unsupported",
+            "reason": "Binance TH API docs do not list a test-order endpoint. Use dry-run validation instead.",
+            "wouldSend": params,
+        }
     try:
-        await client.signed_request("POST", "/api/v3/order/test", params)
+        await client.signed_request("POST", test_order_endpoint, params)
     except BinanceError as exc:
         return {"status": "error", "reason": str(exc), "wouldSend": params}
     return {"status": "ok", "reason": "Binance accepted this test order. No real order was placed.", "wouldSend": params}
@@ -406,7 +467,7 @@ async def enforce_order_limits(client: BinanceClient, order: OrderRequest, shoul
 
     if order.quantity is not None:
         try:
-            ticker = await client.public_get("/api/v3/ticker/price", {"symbol": SYMBOL})
+            ticker = await client.public_get(client.endpoints["ticker_price"], {"symbol": SYMBOL})
         except BinanceError as exc:
             if should_dry_run:
                 return
@@ -420,8 +481,9 @@ async def enforce_ai_budget(order: OrderRequest, params: dict[str, Any]) -> None
     if order.source != "ai":
         return
 
-    ai_order_usdt = env_decimal("AI_ORDER_USDT", "10")
-    ai_daily_budget = env_decimal("AI_DAILY_BUDGET_USDT", "25")
+    bot_config = read_bot_config(bot_config_defaults())
+    ai_order_usdt = Decimal(str(bot_config.orderUsdt))
+    ai_daily_budget = Decimal(str(bot_config.dailyBudgetUsdt))
     if order.side == "BUY":
         quote_qty = d(params.get("quoteOrderQty"))
         if quote_qty > ai_order_usdt:
@@ -429,6 +491,37 @@ async def enforce_ai_budget(order: OrderRequest, params: dict[str, Any]) -> None
         spent_today = ai_spent_today_usdt(read_history())
         if spent_today + quote_qty > ai_daily_budget:
             raise HTTPException(status_code=400, detail=f"AI daily budget exceeded ({ai_daily_budget} USDT)")
+
+
+def evaluate_bot_rules(signal: dict[str, Any], config: BotConfig) -> dict[str, Any]:
+    if not config.enabled:
+        return {"allowed": False, "reason": "Bot is disabled in Bot Rules."}
+
+    decision = signal.get("decision", "WAIT")
+    confidence = float(signal.get("confidence") or 0)
+    plan = signal.get("tradePlan") or {}
+    current_price = d(plan.get("currentPrice"))
+    support = d(plan.get("support"))
+    resistance = d(plan.get("resistance"))
+
+    if decision == "WAIT":
+        return {"allowed": False, "reason": "AI signal is WAIT."}
+    if decision == "BUY" and not config.allowBuy:
+        return {"allowed": False, "reason": "BUY is disabled in Bot Rules."}
+    if decision == "SELL" and not config.allowSell:
+        return {"allowed": False, "reason": "SELL is disabled in Bot Rules."}
+    if confidence < config.minConfidence:
+        return {"allowed": False, "reason": f"Signal confidence is below {config.minConfidence:.0%}."}
+    if decision == "BUY" and resistance > 0:
+        distance_to_resistance = ((resistance - current_price) / current_price) * Decimal("100")
+        if distance_to_resistance < Decimal(str(config.buyBelowResistancePct)):
+            return {"allowed": False, "reason": "BUY is too close to resistance."}
+    if decision == "SELL" and support > 0:
+        distance_to_support = ((current_price - support) / current_price) * Decimal("100")
+        if distance_to_support < Decimal(str(config.sellAboveSupportPct)):
+            return {"allowed": False, "reason": "SELL is too close to support."}
+
+    return {"allowed": True, "reason": "Bot Rules passed."}
 
 
 def calculate_symbol_pnl(trades: list[dict[str, Any]], current_price: Decimal, account_base: Decimal) -> dict[str, Any]:

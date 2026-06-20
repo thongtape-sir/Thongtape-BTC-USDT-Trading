@@ -1,6 +1,6 @@
-# BTC Binance Monitor
+# BTC Binance TH Monitor
 
-เว็บแอปสำหรับดูราคา BTCUSDT, อ่านพอร์ต Spot จาก Binance, คำนวณ PnL แบบประมาณการจากประวัติเทรด BTCUSDT และเตรียมคำสั่งซื้อขายแบบมีรางกันความเสี่ยง
+เว็บแอปสำหรับดูราคา BTCUSDT, อ่านพอร์ต Spot จาก Binance TH, คำนวณ PnL แบบประมาณการจากประวัติเทรด BTCUSDT และเตรียมคำสั่งซื้อขายแบบมีรางกันความเสี่ยง
 
 ตอนนี้หน้า dashboard มีกราฟแท่งเทียน BTCUSDT พร้อม timeframe `1m`, `5m`, `15m`, `1h`, `4h`, และ `1d` พร้อมเส้นราคา Close, MA(7), MA(30), MA(99), volume, และ zoom ด้วยปุ่มหรือ mouse wheel
 
@@ -8,9 +8,9 @@ AI Signal จะแสดง bias ว่าควร `BUY`, `SELL`, หรือ
 
 ## สิ่งที่ต้องทำก่อน
 
-1. Revoke API key ที่เคยส่งในแชต แล้วสร้าง Binance API key ใหม่
+1. Revoke API key ที่เคยส่งในแชต แล้วสร้าง Binance TH API key ใหม่
 2. แนะนำให้เปิดแค่ `Enable Reading` ก่อน
-3. ถ้าจะใช้คำสั่งเงินจริง ให้จำกัด IP ใน Binance API Management และกำหนดวงเงินเล็กมาก
+3. ถ้าจะใช้คำสั่งเงินจริง ให้จำกัด IP ใน Binance TH API Management และกำหนดวงเงินเล็กมาก
 
 ## ติดตั้งและรัน
 
@@ -29,7 +29,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 http://127.0.0.1:8000
 ```
 
-ราคาตลาดใช้ endpoint public ของ Binance (`https://data-api.binance.vision`) โดยค่าเริ่มต้น ส่วนพอร์ตและคำสั่งซื้อขายใช้ signed endpoint ของบัญชีจริง ถ้าเครื่องต่อ Binance live endpoint ไม่ได้ ให้ลองตั้ง `BINANCE_BASE_URL` ใน `.env` เช่น `https://api1.binance.com` หรือเริ่มจาก `BINANCE_ENV=testnet` เพื่อทดสอบก่อน
+ราคาตลาด พอร์ต และคำสั่งซื้อขายใช้ Binance TH endpoint (`https://api.binance.th`) โดยค่าเริ่มต้น และต้องใช้ API key/secret ที่สร้างจาก Binance TH ไม่ใช่ Binance global
 
 อย่าใส่ API key ใน `.env.example` ให้ใส่ใน `.env` เท่านั้น
 
@@ -80,7 +80,7 @@ AI_DAILY_BUDGET_USDT=25
 ALLOW_AI_LIVE_ORDERS=false
 ```
 
-แนะนำให้เปิดเฉพาะหลังจากทดสอบบน Binance Spot Testnet และเข้าใจความเสี่ยงทั้งหมดแล้ว
+แนะนำให้เปิดเฉพาะหลังจากทดสอบ dry-run บน Binance TH, ตรวจ API permission/IP whitelist แล้ว และเข้าใจความเสี่ยงทั้งหมดแล้ว
 
 ## หมายเหตุ PnL
 

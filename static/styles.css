@@ -259,6 +259,14 @@ label span {
   background: #111827;
 }
 
+.legend-support {
+  background: #12805c;
+}
+
+.legend-resistance {
+  background: #c2415b;
+}
+
 .chart-wrap {
   position: relative;
   height: clamp(320px, 48vh, 480px);
@@ -422,7 +430,15 @@ label span {
   margin-top: 12px;
 }
 
-.plan-grid div {
+.level-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.plan-grid div,
+.level-grid div {
   min-height: 66px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -435,6 +451,28 @@ label span {
 
 .plan-grid strong {
   font-size: 15px;
+}
+
+.level-grid strong {
+  font-size: 18px;
+}
+
+.support-level {
+  border-color: rgba(18, 128, 92, 0.28) !important;
+  background: #effaf5;
+}
+
+.support-level strong {
+  color: var(--green);
+}
+
+.resistance-level {
+  border-color: rgba(194, 65, 91, 0.28) !important;
+  background: #fff3f5;
+}
+
+.resistance-level strong {
+  color: var(--rose);
 }
 
 .history-card {
@@ -523,6 +561,19 @@ label span {
   background: var(--teal);
 }
 
+.rule-toggles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.rule-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+}
+
 label {
   display: grid;
   gap: 6px;
@@ -592,7 +643,10 @@ input {
   .grid,
   .portfolio,
   .pnl-grid,
-  .history-summary {
+  .history-summary,
+  .level-grid,
+  .rule-grid,
+  .rule-toggles {
     grid-template-columns: 1fr;
   }
 
