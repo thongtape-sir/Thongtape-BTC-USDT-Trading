@@ -485,7 +485,8 @@ label span {
   gap: 8px;
 }
 
-.history-summary div {
+.history-summary div,
+.bot-status div {
   min-height: 72px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -495,13 +496,23 @@ label span {
   justify-content: space-between;
 }
 
-.history-summary span {
+.history-summary span,
+.bot-status span {
   color: var(--muted);
   font-size: 12px;
 }
 
-.history-summary strong {
+.history-summary strong,
+.bot-status strong {
   font-size: 19px;
+  overflow-wrap: anywhere;
+}
+
+.bot-status {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
 }
 
 .history-table-wrap {
@@ -644,6 +655,7 @@ input {
   .portfolio,
   .pnl-grid,
   .history-summary,
+  .bot-status,
   .level-grid,
   .rule-grid,
   .rule-toggles {

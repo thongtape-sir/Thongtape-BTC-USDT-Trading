@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import os
+import asyncio
+from contextlib import suppress
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
@@ -25,6 +28,16 @@ BASE_ASSET = "BTC"
 QUOTE_ASSET = "USDT"
 CONFIRM_TEXT = "PLACE REAL BTC ORDER"
 ALLOWED_INTERVALS = {"1m", "5m", "15m", "1h", "4h", "1d"}
+BOT_STATUS: dict[str, Any] = {
+    "enabled": False,
+    "running": False,
+    "lastRunAt": None,
+    "nextRunAt": None,
+    "lastResult": None,
+    "lastError": None,
+    "runCount": 0,
+}
+bot_task: asyncio.Task[None] | None = None
 
 
 def env_bool(name: str, default: bool = False) -> bool:
@@ -45,7 +58,15 @@ def bot_config_defaults() -> dict[str, Any]:
         "orderUsdt": float(env_decimal("AI_ORDER_USDT", "10")),
         "sellQtyBtc": float(env_decimal("AI_ORDER_BTC_QTY", "0.0001")),
         "dailyBudgetUsdt": float(env_decimal("AI_DAILY_BUDGET_USDT", "25")),
+        "checkIntervalMinutes": int(os.getenv("BOT_CHECK_INTERVAL_MINUTES", "15")),
     }
+
+
+def env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
 
 
 def make_client() -> BinanceClient:
@@ -71,6 +92,29 @@ class OrderRequest(BaseModel):
 
 app = FastAPI(title="BTC Binance TH Monitor")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.on_event("startup")
+async def start_background_bot() -> None:
+    global bot_task
+    if not env_bool("BACKGROUND_BOT_ENABLED", True):
+        BOT_STATUS.update({"enabled": False, "running": False, "lastResult": "Background bot disabled by environment."})
+        return
+    if bot_task is None or bot_task.done():
+        BOT_STATUS.update({"enabled": True, "running": True})
+        bot_task = asyncio.create_task(bot_loop())
+
+
+@app.on_event("shutdown")
+async def stop_background_bot() -> None:
+    global bot_task
+    if bot_task is None:
+        return
+    bot_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await bot_task
+    bot_task = None
+    BOT_STATUS.update({"running": False, "nextRunAt": None})
 
 
 @app.get("/")
@@ -301,6 +345,23 @@ async def get_bot_config() -> dict[str, Any]:
     return read_bot_config(bot_config_defaults()).model_dump()
 
 
+@app.get("/api/bot/status")
+async def get_bot_status() -> dict[str, Any]:
+    config = read_bot_config(bot_config_defaults())
+    return {
+        **BOT_STATUS,
+        "configEnabled": config.enabled,
+        "dryRunOnly": config.dryRunOnly,
+        "checkIntervalMinutes": config.checkIntervalMinutes,
+        "backgroundBotEnabled": env_bool("BACKGROUND_BOT_ENABLED", True),
+    }
+
+
+@app.post("/api/bot/run-now")
+async def run_bot_now() -> dict[str, Any]:
+    return await run_bot_cycle(trigger="manual")
+
+
 @app.put("/api/bot/config")
 async def update_bot_config(config: BotConfig) -> dict[str, Any]:
     max_usdt = float(env_decimal("MAX_ORDER_USDT", "25"))
@@ -316,6 +377,51 @@ async def update_bot_config(config: BotConfig) -> dict[str, Any]:
 
     saved = write_bot_config(config)
     return saved.model_dump()
+
+
+async def bot_loop() -> None:
+    startup_delay = max(0, env_int("BOT_STARTUP_DELAY_SECONDS", 60))
+    if startup_delay:
+        BOT_STATUS["nextRunAt"] = (datetime.now(timezone.utc) + timedelta(seconds=startup_delay)).isoformat()
+        await asyncio.sleep(startup_delay)
+
+    while True:
+        config = read_bot_config(bot_config_defaults())
+        await run_bot_cycle(trigger="scheduler")
+        next_delay = max(60, config.checkIntervalMinutes * 60)
+        BOT_STATUS["nextRunAt"] = (datetime.now(timezone.utc) + timedelta(seconds=next_delay)).isoformat()
+        await asyncio.sleep(next_delay)
+
+
+async def run_bot_cycle(trigger: str) -> dict[str, Any]:
+    config = read_bot_config(bot_config_defaults())
+    now = datetime.now(timezone.utc).isoformat()
+    BOT_STATUS["lastRunAt"] = now
+    BOT_STATUS["runCount"] = int(BOT_STATUS.get("runCount") or 0) + 1
+
+    if not config.enabled:
+        result = {
+            "status": "skipped",
+            "trigger": trigger,
+            "reason": "Bot is disabled in Bot Rules.",
+            "dryRunOnly": config.dryRunOnly,
+        }
+        BOT_STATUS.update({"lastResult": result, "lastError": None})
+        return result
+
+    try:
+        result = await execute_ai_order(dryRun=False)
+        wrapped = {"trigger": trigger, **result}
+        BOT_STATUS.update({"lastResult": wrapped, "lastError": None})
+        return wrapped
+    except HTTPException as exc:
+        error = {"status": "error", "trigger": trigger, "reason": exc.detail}
+        BOT_STATUS.update({"lastResult": error, "lastError": exc.detail})
+        return error
+    except Exception as exc:
+        error = {"status": "error", "trigger": trigger, "reason": str(exc)}
+        BOT_STATUS.update({"lastResult": error, "lastError": str(exc)})
+        return error
 
 
 @app.get("/api/orders/history")

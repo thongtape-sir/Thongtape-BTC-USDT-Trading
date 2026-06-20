@@ -22,6 +22,7 @@ class BotConfig(BaseModel):
     orderUsdt: float = Field(default=10, gt=0)
     sellQtyBtc: float = Field(default=0.0001, gt=0)
     dailyBudgetUsdt: float = Field(default=25, gt=0)
+    checkIntervalMinutes: int = Field(default=15, ge=1, le=1440)
 
 
 def read_bot_config(defaults: dict[str, Any] | None = None) -> BotConfig:

@@ -217,6 +217,7 @@ function renderBotConfig(config) {
   $("botOrderUsdt").value = config.orderUsdt ?? 10;
   $("botSellQtyBtc").value = config.sellQtyBtc ?? 0.0001;
   $("botDailyBudget").value = config.dailyBudgetUsdt ?? 25;
+  $("botCheckInterval").value = config.checkIntervalMinutes ?? 15;
   updateBotMode();
   $("botRulesMessage").textContent = "Rules loaded. .env safety limits still apply.";
 }
@@ -233,6 +234,7 @@ function collectBotConfig() {
     orderUsdt: Number($("botOrderUsdt").value),
     sellQtyBtc: Number($("botSellQtyBtc").value),
     dailyBudgetUsdt: Number($("botDailyBudget").value),
+    checkIntervalMinutes: Number($("botCheckInterval").value),
   };
 }
 
@@ -248,6 +250,30 @@ async function saveBotConfig() {
   } catch (error) {
     $("botRulesMessage").textContent = error.message;
   }
+}
+
+async function loadBotStatus() {
+  try {
+    const status = await api("/api/bot/status");
+    $("botWorkerState").textContent = status.backgroundBotEnabled && status.running ? "Running" : "Stopped";
+    $("botLastRun").textContent = formatDateTime(status.lastRunAt);
+    $("botNextRun").textContent = formatDateTime(status.nextRunAt);
+    const result = status.lastResult || {};
+    $("botLastResult").textContent = result.status ? `${result.status}: ${result.reason || result.trigger || ""}` : "--";
+  } catch (error) {
+    $("botWorkerState").textContent = "Unknown";
+    $("botLastResult").textContent = error.message;
+  }
+}
+
+function formatDateTime(value) {
+  if (!value) return "--";
+  return new Intl.DateTimeFormat("th-TH", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
 }
 
 function updateBotMode() {
@@ -520,9 +546,10 @@ async function boot() {
   bindEvents();
   if (window.lucide) window.lucide.createIcons();
   await loadHealth();
-  await Promise.all([loadMarket(), loadCandles(), loadAccount(), loadOrderHistory(), loadBotConfig()]);
+  await Promise.all([loadMarket(), loadCandles(), loadAccount(), loadOrderHistory(), loadBotConfig(), loadBotStatus()]);
   setInterval(loadMarket, 15000);
   setInterval(loadCandles, 60000);
+  setInterval(loadBotStatus, 60000);
 }
 
 boot();
