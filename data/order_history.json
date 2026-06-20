@@ -1,0 +1,122 @@
+[
+  {
+    "id": "f313a86a-a966-4337-b7e1-b55715fe04f2",
+    "createdAt": "2026-06-18T08:24:18.899358+00:00",
+    "source": "ai",
+    "status": "failed",
+    "reason": "Binance error -2015: Invalid API-key, IP, or permissions for action.",
+    "symbol": "BTCUSDT",
+    "side": "SELL",
+    "type": "MARKET",
+    "dryRun": false,
+    "quantity": "0.0001",
+    "quoteOrderQty": null,
+    "params": {
+      "symbol": "BTCUSDT",
+      "side": "SELL",
+      "type": "MARKET",
+      "quantity": "0.0001",
+      "newOrderRespType": "FULL"
+    }
+  },
+  {
+    "id": "1a9e7eca-6003-4f7e-9911-e885e80e1eed",
+    "createdAt": "2026-06-18T08:24:18.355269+00:00",
+    "source": "ai",
+    "status": "dry_run",
+    "reason": "Dry-run requested.",
+    "symbol": "BTCUSDT",
+    "side": "SELL",
+    "type": "MARKET",
+    "dryRun": true,
+    "quantity": "0.0001",
+    "quoteOrderQty": null,
+    "params": {
+      "symbol": "BTCUSDT",
+      "side": "SELL",
+      "type": "MARKET",
+      "quantity": "0.0001",
+      "newOrderRespType": "FULL"
+    }
+  },
+  {
+    "id": "4a82754e-99a2-47d2-b9f4-e0e1dbd1b3d1",
+    "createdAt": "2026-06-18T08:24:15.878200+00:00",
+    "source": "manual",
+    "status": "dry_run",
+    "reason": "Manual live trading is disabled. Only AI live orders can be sent when ALLOW_AI_LIVE_ORDERS=true.",
+    "symbol": "BTCUSDT",
+    "side": "BUY",
+    "type": "MARKET",
+    "dryRun": false,
+    "quantity": null,
+    "quoteOrderQty": "10",
+    "params": {
+      "symbol": "BTCUSDT",
+      "side": "BUY",
+      "type": "MARKET",
+      "quoteOrderQty": "10",
+      "newOrderRespType": "FULL"
+    }
+  },
+  {
+    "id": "1406aefd-d97c-42d4-9240-c12c622b470c",
+    "createdAt": "2026-06-18T08:05:34.264127+00:00",
+    "source": "ai",
+    "status": "dry_run",
+    "reason": "Live trading is disabled or dryRun=true.",
+    "symbol": "BTCUSDT",
+    "side": "SELL",
+    "type": "MARKET",
+    "dryRun": true,
+    "quantity": "0.0001",
+    "quoteOrderQty": null,
+    "params": {
+      "symbol": "BTCUSDT",
+      "side": "SELL",
+      "type": "MARKET",
+      "quantity": "0.0001",
+      "newOrderRespType": "FULL"
+    }
+  },
+  {
+    "id": "b11fdf31-b3fa-430e-9936-239c0343e950",
+    "createdAt": "2026-06-18T07:44:51.026199+00:00",
+    "source": "ai",
+    "status": "dry_run",
+    "reason": "Live trading is disabled or dryRun=true.",
+    "symbol": "ETHUSDT",
+    "side": "SELL",
+    "type": "MARKET",
+    "dryRun": true,
+    "quantity": "0.005",
+    "quoteOrderQty": null,
+    "params": {
+      "symbol": "ETHUSDT",
+      "side": "SELL",
+      "type": "MARKET",
+      "quantity": "0.005",
+      "newOrderRespType": "FULL"
+    }
+  },
+  {
+    "id": "1438d276-6c34-4a66-942e-c90c1fd6f820",
+    "createdAt": "2026-06-18T07:43:14.085937+00:00",
+    "source": "ai",
+    "status": "dry_run",
+    "reason": "Live trading is disabled or dryRun=true.",
+    "symbol": "ETHUSDT",
+    "side": "SELL",
+    "type": "MARKET",
+    "dryRun": true,
+    "quantity": "0.005",
+    "quoteOrderQty": null,
+    "params": {
+      "symbol": "ETHUSDT",
+      "side": "SELL",
+      "type": "MARKET",
+      "quantity": "0.005",
+      "newOrderRespType": "FULL"
+    }
+  }
+]
