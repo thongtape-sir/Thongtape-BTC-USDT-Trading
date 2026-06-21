@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from .binance_client import BinanceClient, BinanceError, d, money
 from .bot_config import BotConfig, read_bot_config, write_bot_config
 from .order_history import ai_spent_today_usdt, append_history, extract_execution, read_history, summarize_history
-from .postgres_store import append_bot_run_log, init_db
+from .postgres_store import append_bot_run_log, init_db, status as storage_status
 from .signal_engine import build_signal
 
 load_dotenv()
@@ -151,6 +151,7 @@ async def health() -> dict[str, Any]:
         "aiOrderBtcQty": float(env_decimal("AI_ORDER_BTC_QTY", "0.0001")),
         "aiDailyBudgetUsdt": float(env_decimal("AI_DAILY_BUDGET_USDT", "25")),
         "botConfig": read_bot_config(bot_config_defaults()).model_dump(),
+        "storage": storage_status(),
     }
 
 
@@ -360,6 +361,7 @@ async def get_bot_status() -> dict[str, Any]:
         "dryRunOnly": config.dryRunOnly,
         "checkIntervalMinutes": config.checkIntervalMinutes,
         "backgroundBotEnabled": env_bool("BACKGROUND_BOT_ENABLED", True),
+        "storage": storage_status(),
     }
 
 

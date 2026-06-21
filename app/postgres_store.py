@@ -4,6 +4,8 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
+LAST_ERROR: str | None = None
+
 
 def database_url() -> str | None:
     url = os.getenv("DATABASE_URL")
@@ -17,6 +19,18 @@ def database_url() -> str | None:
 
 def enabled() -> bool:
     return bool(database_url())
+
+
+def set_last_error(exc: Exception | str | None) -> None:
+    global LAST_ERROR
+    LAST_ERROR = None if exc is None else str(exc)
+
+
+def status() -> dict[str, Any]:
+    return {
+        "postgresEnabled": enabled(),
+        "lastError": LAST_ERROR,
+    }
 
 
 def connect():
@@ -75,6 +89,7 @@ def init_db() -> None:
             )
             cur.execute("create index if not exists idx_order_history_created_at on order_history (created_at desc)")
             cur.execute("create index if not exists idx_bot_run_log_created_at on bot_run_log (created_at desc)")
+    set_last_error(None)
 
 
 def read_bot_config() -> dict[str, Any] | None:

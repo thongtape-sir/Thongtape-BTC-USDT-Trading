@@ -30,10 +30,14 @@ class BotConfig(BaseModel):
 def read_bot_config(defaults: dict[str, Any] | None = None) -> BotConfig:
     payload: dict[str, Any] = dict(defaults or {})
     if postgres_store.enabled():
-        saved = postgres_store.read_bot_config()
-        if isinstance(saved, dict):
-            payload.update(saved)
-        return BotConfig(**payload)
+        try:
+            saved = postgres_store.read_bot_config()
+            if isinstance(saved, dict):
+                payload.update(saved)
+            postgres_store.set_last_error(None)
+            return BotConfig(**payload)
+        except Exception as exc:
+            postgres_store.set_last_error(exc)
 
     if CONFIG_PATH.exists():
         try:
@@ -47,8 +51,12 @@ def read_bot_config(defaults: dict[str, Any] | None = None) -> BotConfig:
 
 def write_bot_config(config: BotConfig) -> BotConfig:
     if postgres_store.enabled():
-        postgres_store.write_bot_config(config.model_dump())
-        return config
+        try:
+            postgres_store.write_bot_config(config.model_dump())
+            postgres_store.set_last_error(None)
+            return config
+        except Exception as exc:
+            postgres_store.set_last_error(exc)
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     CONFIG_PATH.write_text(

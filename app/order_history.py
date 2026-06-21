@@ -20,7 +20,12 @@ def utc_now() -> str:
 
 def read_history() -> list[dict[str, Any]]:
     if postgres_store.enabled():
-        return postgres_store.read_order_history()
+        try:
+            history = postgres_store.read_order_history()
+            postgres_store.set_last_error(None)
+            return history
+        except Exception as exc:
+            postgres_store.set_last_error(exc)
 
     if not HISTORY_PATH.exists():
         return []
@@ -38,8 +43,12 @@ def append_history(entry: dict[str, Any]) -> dict[str, Any]:
         **entry,
     }
     if postgres_store.enabled():
-        postgres_store.append_order_history(record)
-        return record
+        try:
+            postgres_store.append_order_history(record)
+            postgres_store.set_last_error(None)
+            return record
+        except Exception as exc:
+            postgres_store.set_last_error(exc)
 
     HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
     history = read_history()
