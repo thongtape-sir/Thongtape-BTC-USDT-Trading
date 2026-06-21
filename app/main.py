@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from .binance_client import BinanceClient, BinanceError, d, money
 from .bot_config import BotConfig, read_bot_config, write_bot_config
 from .order_history import ai_spent_today_usdt, append_history, extract_execution, read_history, summarize_history
+from .postgres_store import append_bot_run_log, init_db
 from .signal_engine import build_signal
 
 load_dotenv()
@@ -97,6 +98,11 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 @app.on_event("startup")
 async def start_background_bot() -> None:
     global bot_task
+    try:
+        init_db()
+    except Exception as exc:
+        BOT_STATUS.update({"lastError": f"Database init failed: {exc}"})
+
     if not env_bool("BACKGROUND_BOT_ENABLED", True):
         BOT_STATUS.update({"enabled": False, "running": False, "lastResult": "Background bot disabled by environment."})
         return
@@ -407,21 +413,37 @@ async def run_bot_cycle(trigger: str) -> dict[str, Any]:
             "dryRunOnly": config.dryRunOnly,
         }
         BOT_STATUS.update({"lastResult": result, "lastError": None})
+        log_bot_run(trigger, result)
         return result
 
     try:
         result = await execute_ai_order(dryRun=False)
         wrapped = {"trigger": trigger, **result}
         BOT_STATUS.update({"lastResult": wrapped, "lastError": None})
+        log_bot_run(trigger, wrapped)
         return wrapped
     except HTTPException as exc:
         error = {"status": "error", "trigger": trigger, "reason": exc.detail}
         BOT_STATUS.update({"lastResult": error, "lastError": exc.detail})
+        log_bot_run(trigger, error)
         return error
     except Exception as exc:
         error = {"status": "error", "trigger": trigger, "reason": str(exc)}
         BOT_STATUS.update({"lastResult": error, "lastError": str(exc)})
+        log_bot_run(trigger, error)
         return error
+
+
+def log_bot_run(trigger: str, payload: dict[str, Any]) -> None:
+    try:
+        append_bot_run_log(
+            trigger=trigger,
+            status=str(payload.get("status", "unknown")),
+            reason=str(payload.get("reason")) if payload.get("reason") is not None else None,
+            payload=payload,
+        )
+    except Exception as exc:
+        BOT_STATUS["lastError"] = f"Bot run log failed: {exc}"
 
 
 @app.get("/api/orders/history")

@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from . import postgres_store
+
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 CONFIG_PATH = DATA_DIR / "bot_config.json"
@@ -27,6 +29,12 @@ class BotConfig(BaseModel):
 
 def read_bot_config(defaults: dict[str, Any] | None = None) -> BotConfig:
     payload: dict[str, Any] = dict(defaults or {})
+    if postgres_store.enabled():
+        saved = postgres_store.read_bot_config()
+        if isinstance(saved, dict):
+            payload.update(saved)
+        return BotConfig(**payload)
+
     if CONFIG_PATH.exists():
         try:
             saved = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
@@ -38,6 +46,10 @@ def read_bot_config(defaults: dict[str, Any] | None = None) -> BotConfig:
 
 
 def write_bot_config(config: BotConfig) -> BotConfig:
+    if postgres_store.enabled():
+        postgres_store.write_bot_config(config.model_dump())
+        return config
+
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     CONFIG_PATH.write_text(
         json.dumps(config.model_dump(), indent=2, ensure_ascii=False),

@@ -8,6 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from .binance_client import d, money
+from . import postgres_store
 
 ROOT = Path(__file__).resolve().parent.parent
 HISTORY_PATH = ROOT / "data" / "order_history.json"
@@ -18,6 +19,9 @@ def utc_now() -> str:
 
 
 def read_history() -> list[dict[str, Any]]:
+    if postgres_store.enabled():
+        return postgres_store.read_order_history()
+
     if not HISTORY_PATH.exists():
         return []
     try:
@@ -28,13 +32,17 @@ def read_history() -> list[dict[str, Any]]:
 
 
 def append_history(entry: dict[str, Any]) -> dict[str, Any]:
-    HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    history = read_history()
     record = {
         "id": str(uuid4()),
         "createdAt": utc_now(),
         **entry,
     }
+    if postgres_store.enabled():
+        postgres_store.append_order_history(record)
+        return record
+
+    HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    history = read_history()
     history.insert(0, record)
     HISTORY_PATH.write_text(json.dumps(history[:1000], ensure_ascii=False, indent=2), encoding="utf-8")
     return record
