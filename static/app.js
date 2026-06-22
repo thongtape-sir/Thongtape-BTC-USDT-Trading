@@ -34,15 +34,40 @@ const formatNumber = (value, maximumFractionDigits = 6) => {
 };
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
+  const timeoutMs = options.timeoutMs || 20000;
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  const { timeoutMs: _timeoutMs, ...fetchOptions } = options;
+
+  let response;
+  try {
+    response = await fetch(path, {
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      ...fetchOptions,
+    });
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error("Request timed out. Render may still be waking up.");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
+  }
+
   const payload = await response.json();
   if (!response.ok) {
     throw new Error(payload.detail || "Request failed");
   }
   return payload;
+}
+
+async function runStartupTask(task, onError) {
+  try {
+    await task();
+  } catch (error) {
+    if (onError) onError(error);
+  }
 }
 
 function setStatus(message, className = "neutral") {
@@ -662,11 +687,17 @@ function bindEvents() {
 async function boot() {
   bindEvents();
   if (window.lucide) window.lucide.createIcons();
-  await loadHealth();
-  await Promise.all([loadMarket(), loadCandles(), loadAccount(), loadOrderHistory(), loadBotConfig(), loadBotStatus()]);
+  setStatus("Connecting", "neutral");
+  await runStartupTask(loadHealth, (error) => setStatus(error.message, "danger"));
+  await runStartupTask(loadMarket, (error) => setStatus(error.message, "danger"));
+  runStartupTask(loadCandles);
+  runStartupTask(loadAccount);
+  runStartupTask(loadOrderHistory);
+  runStartupTask(loadBotConfig);
+  runStartupTask(loadBotStatus);
   setInterval(loadMarket, 15000);
   setInterval(loadCandles, 60000);
   setInterval(loadBotStatus, 60000);
 }
 
-boot();
+boot().catch((error) => setStatus(error.message, "danger"));
