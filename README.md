@@ -23,6 +23,14 @@ notepad .env
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
+Render Start Command:
+
+```text
+python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT
+```
+
+Do not use `--reload` on Render. Reload mode is for local development and uses extra memory.
+
 เปิดเว็บที่:
 
 ```text

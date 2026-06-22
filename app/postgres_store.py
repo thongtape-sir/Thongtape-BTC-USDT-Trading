@@ -6,6 +6,7 @@ from typing import Any
 
 LAST_ERROR: str | None = None
 RETRY_AFTER: datetime | None = None
+INITIALIZED = False
 
 
 def database_url() -> str | None:
@@ -68,6 +69,9 @@ def jsonb(value: Any) -> Any:
 
 
 def init_db() -> None:
+    global INITIALIZED
+    if INITIALIZED:
+        return
     if not enabled():
         return
 
@@ -120,6 +124,7 @@ def init_db() -> None:
             cur.execute(
                 "create index if not exists idx_portfolio_value_history_created_at on portfolio_value_history (created_at desc)"
             )
+    INITIALIZED = True
     set_last_error(None)
 
 

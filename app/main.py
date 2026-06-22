@@ -233,7 +233,8 @@ async def account() -> dict[str, Any]:
     try:
         account_payload = await client.signed_request("GET", client.endpoints["account"])
         ticker = await client.public_get(client.endpoints["ticker_price"], {"symbol": SYMBOL})
-        trades = await client.signed_request("GET", client.endpoints["my_trades"], {"symbol": SYMBOL, "limit": 1000})
+        trade_limit = max(20, min(env_int("ACCOUNT_TRADE_LIMIT", 200), 1000))
+        trades = await client.signed_request("GET", client.endpoints["my_trades"], {"symbol": SYMBOL, "limit": trade_limit})
     except BinanceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
