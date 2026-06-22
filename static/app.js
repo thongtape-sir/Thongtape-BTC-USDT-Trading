@@ -10,6 +10,11 @@ const state = {
     resistance: null,
     current: null,
   },
+  historyFilters: {
+    side: "ALL",
+    status: "ALL",
+    source: "ALL",
+  },
 };
 
 const $ = (id) => document.getElementById(id);
@@ -94,6 +99,7 @@ async function loadAccount() {
     $("totalPnl").textContent = formatUsd(account.pnl?.totalUsdt);
     $("pnlWarning").textContent = account.pnl?.warning || "";
     $("accountMessage").textContent = account.portfolio?.note || "";
+    await loadPortfolioHistory();
   } catch (error) {
     $("accountMessage").textContent = error.message;
   }
@@ -101,10 +107,14 @@ async function loadAccount() {
 
 async function loadOrderHistory() {
   try {
-    const payload = await api("/api/orders/history");
+    const params = new URLSearchParams({ limit: "30" });
+    if (state.historyFilters.side !== "ALL") params.set("side", state.historyFilters.side);
+    if (state.historyFilters.status !== "ALL") params.set("status", state.historyFilters.status);
+    if (state.historyFilters.source !== "ALL") params.set("source", state.historyFilters.source);
+    const payload = await api(`/api/orders/history?${params.toString()}`);
     renderOrderHistory(payload);
   } catch (error) {
-    $("historyRows").innerHTML = `<tr><td colspan="7">${error.message}</td></tr>`;
+    $("historyRows").innerHTML = `<tr><td colspan="8">${error.message}</td></tr>`;
   }
 }
 
@@ -119,16 +129,17 @@ function renderOrderHistory(payload) {
 
   $("historyRows").innerHTML = "";
   if (!orders.length) {
-    $("historyRows").innerHTML = '<tr><td colspan="7">No order history yet</td></tr>';
+    $("historyRows").innerHTML = '<tr><td colspan="8">No matching order history</td></tr>';
     return;
   }
 
-  orders.slice(0, 80).forEach((order) => {
+  orders.slice(0, 30).forEach((order) => {
     const row = document.createElement("tr");
     const orderBaseAsset = baseAssetFromSymbol(order.symbol) || state.baseAsset;
     const amount = order.quoteOrderQty
       ? `${formatNumber(order.quoteOrderQty, 2)} ${state.quoteAsset}`
       : `${formatNumber(order.quantity, 8)} ${orderBaseAsset}`;
+    const avgPrice = order.averagePrice || averagePriceFromOrder(order);
     const executed = order.executedQty
       ? `${formatNumber(order.executedQty, 8)} ${orderBaseAsset} / ${formatUsd(order.cummulativeQuoteQty, 2)}`
       : "--";
@@ -138,11 +149,28 @@ function renderOrderHistory(payload) {
       <td>${order.status || "--"}</td>
       <td>${order.side || "--"}</td>
       <td>${amount}</td>
+      <td>${formatUsd(avgPrice, 2)}</td>
       <td>${executed}</td>
-      <td>${order.reason || "--"}</td>
+      <td title="${escapeAttr(order.reason || "--")}">${shortText(order.reason || "--", 72)}</td>
     `;
     $("historyRows").appendChild(row);
   });
+}
+
+function averagePriceFromOrder(order) {
+  const qty = Number(order.executedQty);
+  const quote = Number(order.cummulativeQuoteQty);
+  if (!Number.isFinite(qty) || !Number.isFinite(quote) || qty <= 0) return null;
+  return quote / qty;
+}
+
+function shortText(value, maxLength = 72) {
+  const text = String(value || "");
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}...` : text;
+}
+
+function escapeAttr(value) {
+  return String(value).replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
 function baseAssetFromSymbol(symbol) {
@@ -246,10 +274,87 @@ async function saveBotConfig() {
       body: JSON.stringify(collectBotConfig()),
     });
     renderBotConfig(saved);
-    $("botRulesMessage").textContent = "Bot Rules saved.";
+    const storageError = saved.storage?.lastError;
+    $("botRulesMessage").textContent = storageError
+      ? `Saved locally, but PostgreSQL has an issue: ${storageError}`
+      : "Bot Rules saved.";
+    await loadBotConfig();
+    await loadBotStatus();
   } catch (error) {
     $("botRulesMessage").textContent = error.message;
   }
+}
+
+async function askAi() {
+  const question = $("aiQuestion").value.trim();
+  if (!question) {
+    $("aiAnswer").textContent = "พิมพ์คำถามก่อนครับ";
+    return;
+  }
+  $("aiAnswer").textContent = "Thinking...";
+  try {
+    const payload = await api("/api/ai/chat", {
+      method: "POST",
+      body: JSON.stringify({ question }),
+    });
+    $("aiAnswer").textContent = payload.answer || "--";
+  } catch (error) {
+    $("aiAnswer").textContent = error.message;
+  }
+}
+
+async function loadPortfolioHistory() {
+  try {
+    const payload = await api("/api/portfolio/history?limit=50");
+    renderPortfolioHistory(payload);
+  } catch (error) {
+    $("portfolioHistoryMeta").textContent = error.message;
+  }
+}
+
+function renderPortfolioHistory(payload) {
+  const items = (payload.items || []).slice().reverse();
+  const summary = payload.summary || {};
+  $("portfolioChange").textContent =
+    summary.changeUsdt === null || summary.changeUsdt === undefined
+      ? "--"
+      : `${summary.changeUsdt >= 0 ? "+" : ""}${formatUsd(summary.changeUsdt, 2)} (${summary.changePct ?? "--"}%)`;
+  $("portfolioChange").className = Number(summary.changeUsdt) >= 0 ? "ok-text" : "danger-text";
+  $("portfolioHistoryMeta").textContent = items.length ? `${items.length} snapshots tracked` : "No portfolio history yet";
+  drawPortfolioChart(items);
+}
+
+function drawPortfolioChart(items) {
+  const canvas = $("portfolioChart");
+  const ctx = canvas.getContext("2d");
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.max(1, Math.floor(rect.width * dpr));
+  canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, rect.width, rect.height);
+
+  const values = items.map((item) => Number(item.totalValueUsdt)).filter(Number.isFinite);
+  if (values.length < 2) return;
+
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = Math.max(max - min, 1);
+  const pad = 8;
+  const xFor = (index) => pad + (index / (values.length - 1)) * (rect.width - pad * 2);
+  const yFor = (value) => pad + ((max - value) / range) * (rect.height - pad * 2);
+  const rising = values[values.length - 1] >= values[0];
+
+  ctx.strokeStyle = rising ? "#12805c" : "#c2415b";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  values.forEach((value, index) => {
+    const x = xFor(index);
+    const y = yFor(value);
+    if (index === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
 }
 
 async function loadBotStatus() {
@@ -514,6 +619,17 @@ function bindEvents() {
   $("refreshHistory").addEventListener("click", loadOrderHistory);
   $("refreshSignal").addEventListener("click", loadMarket);
   $("saveBotRules").addEventListener("click", saveBotConfig);
+  $("askAi").addEventListener("click", askAi);
+  ["historySideFilter", "historyStatusFilter", "historySourceFilter"].forEach((id) => {
+    $(id).addEventListener("change", async () => {
+      state.historyFilters = {
+        side: $("historySideFilter").value,
+        status: $("historyStatusFilter").value,
+        source: $("historySourceFilter").value,
+      };
+      await loadOrderHistory();
+    });
+  });
   ["botEnabled", "botDryRunOnly"].forEach((id) => {
     $(id).addEventListener("change", updateBotMode);
   });
@@ -540,6 +656,7 @@ function bindEvents() {
     });
   });
   window.addEventListener("resize", drawCandles);
+  window.addEventListener("resize", loadPortfolioHistory);
 }
 
 async function boot() {

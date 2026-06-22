@@ -18,12 +18,17 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def read_history() -> list[dict[str, Any]]:
+def read_history(
+    side: str | None = None,
+    status: str | None = None,
+    source: str | None = None,
+    limit: int = 1000,
+) -> list[dict[str, Any]]:
     if postgres_store.enabled():
         try:
             history = postgres_store.read_order_history()
             postgres_store.set_last_error(None)
-            return history
+            return filter_history(history, side=side, status=status, source=source, limit=limit)
         except Exception as exc:
             postgres_store.set_last_error(exc)
 
@@ -33,7 +38,8 @@ def read_history() -> list[dict[str, Any]]:
         payload = json.loads(HISTORY_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return []
-    return payload if isinstance(payload, list) else []
+    history = payload if isinstance(payload, list) else []
+    return filter_history(history, side=side, status=status, source=source, limit=limit)
 
 
 def append_history(entry: dict[str, Any]) -> dict[str, Any]:
@@ -58,7 +64,7 @@ def append_history(entry: dict[str, Any]) -> dict[str, Any]:
 
 
 def summarize_history(current_price: Decimal | None = None) -> dict[str, Any]:
-    history = read_history()
+    history = read_history(limit=1000)
     live_orders = [item for item in history if item.get("status") == "submitted"]
     dry_runs = [item for item in history if item.get("status") == "dry_run"]
     blocked = [item for item in history if item.get("status") == "blocked"]
@@ -122,11 +128,16 @@ def extract_execution(order_result: dict[str, Any]) -> dict[str, Any]:
             elif asset:
                 fee_usdt += commission * price
 
+    executed_qty = d(order_result.get("executedQty", "0"))
+    quote_qty = d(order_result.get("cummulativeQuoteQty", "0"))
+    average_price = quote_qty / executed_qty if executed_qty > 0 else Decimal("0")
+
     return {
         "orderId": order_result.get("orderId"),
         "clientOrderId": order_result.get("clientOrderId"),
         "executedQty": order_result.get("executedQty", "0"),
         "cummulativeQuoteQty": order_result.get("cummulativeQuoteQty", "0"),
+        "averagePrice": str(average_price),
         "estimatedFeeUsdt": str(fee_usdt),
     }
 
@@ -144,3 +155,23 @@ def ai_spent_today_usdt(history: list[dict[str, Any]]) -> Decimal:
         if created_at == today:
             spent += d(item.get("cummulativeQuoteQty"))
     return spent
+
+
+def filter_history(
+    history: list[dict[str, Any]],
+    side: str | None = None,
+    status: str | None = None,
+    source: str | None = None,
+    limit: int = 1000,
+) -> list[dict[str, Any]]:
+    side = side if isinstance(side, str) else None
+    status = status if isinstance(status, str) else None
+    source = source if isinstance(source, str) else None
+    rows = history
+    if side and side != "ALL":
+        rows = [item for item in rows if str(item.get("side", "")).upper() == side.upper()]
+    if status and status != "ALL":
+        rows = [item for item in rows if str(item.get("status", "")).lower() == status.lower()]
+    if source and source != "ALL":
+        rows = [item for item in rows if str(item.get("source", "")).lower() == source.lower()]
+    return rows[: max(1, min(limit, 1000))]

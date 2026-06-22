@@ -107,6 +107,14 @@
             </div>
           </div>
           <div id="accountMessage" class="message"></div>
+          <div class="portfolio-history">
+            <div class="mini-head">
+              <span>Tracked Value History</span>
+              <strong id="portfolioChange">--</strong>
+            </div>
+            <canvas id="portfolioChart" aria-label="Portfolio value history"></canvas>
+            <div id="portfolioHistoryMeta" class="fineprint">--</div>
+          </div>
         </article>
 
         <article class="card">
@@ -178,6 +186,17 @@
             <p id="riskReward" class="fineprint"></p>
           </div>
           <p class="fineprint">AI auto orders are controlled by Bot Rules and the safety values in .env.</p>
+          <div class="ai-chat">
+            <label>
+              <span>Ask AI about this signal</span>
+              <textarea id="aiQuestion" rows="3" placeholder="เช่น ตอนนี้ควรซื้อหรือรอ? ความเสี่ยงอยู่ตรงไหน?"></textarea>
+            </label>
+            <button id="askAi" class="primary-btn" type="button">
+              <i data-lucide="message-circle"></i>
+              <span>Ask AI</span>
+            </button>
+            <p id="aiAnswer" class="message"></p>
+          </div>
         </article>
 
         <article class="card bot-card">
@@ -259,6 +278,35 @@
             <div><span>Net BTC</span><strong id="historyNetEth">--</strong></div>
             <div><span>Est. Total PnL</span><strong id="historyTotalPnl">--</strong></div>
           </div>
+          <div class="history-filters">
+            <label>
+              <span>Side</span>
+              <select id="historySideFilter">
+                <option value="ALL">All</option>
+                <option value="BUY">Buy</option>
+                <option value="SELL">Sell</option>
+                <option value="WAIT">Wait</option>
+              </select>
+            </label>
+            <label>
+              <span>Status</span>
+              <select id="historyStatusFilter">
+                <option value="ALL">All</option>
+                <option value="submitted">Submitted</option>
+                <option value="dry_run">Dry-run</option>
+                <option value="blocked">Blocked</option>
+                <option value="failed">Failed</option>
+              </select>
+            </label>
+            <label>
+              <span>Source</span>
+              <select id="historySourceFilter">
+                <option value="ALL">All</option>
+                <option value="ai">AI</option>
+                <option value="manual">Manual</option>
+              </select>
+            </label>
+          </div>
           <p id="historyNote" class="fineprint"></p>
           <div class="history-table-wrap">
             <table class="history-table">
@@ -269,6 +317,7 @@
                   <th>Status</th>
                   <th>Side</th>
                   <th>Amount</th>
+                  <th>Avg Price</th>
                   <th>Executed</th>
                   <th>Reason</th>
                 </tr>

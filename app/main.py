@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from .binance_client import BinanceClient, BinanceError, d, money
 from .bot_config import BotConfig, read_bot_config, write_bot_config
 from .order_history import ai_spent_today_usdt, append_history, extract_execution, read_history, summarize_history
+from .portfolio_history import append_portfolio_snapshot, read_portfolio_history
 from .postgres_store import append_bot_run_log, init_db, status as storage_status
 from .signal_engine import build_signal
 
@@ -89,6 +90,10 @@ class OrderRequest(BaseModel):
     dryRun: bool = True
     confirm: str = ""
     source: Literal["manual", "ai"] = "manual"
+
+
+class AiChatRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=800)
 
 
 app = FastAPI(title="BTC Binance TH Monitor")
@@ -259,7 +264,7 @@ async def account() -> dict[str, Any]:
 
     pnl = calculate_symbol_pnl(trades, base_price, base_total)
     base_value = base_total * base_price
-    return {
+    payload = {
         "basePrice": float(base_price),
         "ethPrice": float(base_price),
         "balances": non_zero,
@@ -281,12 +286,33 @@ async def account() -> dict[str, Any]:
         },
         "pnl": pnl,
     }
+    append_portfolio_snapshot(
+        {
+            "symbol": SYMBOL,
+            "baseAsset": BASE_ASSET,
+            "quoteAsset": QUOTE_ASSET,
+            "baseQty": float(base_total),
+            "baseValueUsdt": money(base_value),
+            "quoteValueUsdt": money(quote_total),
+            "totalValueUsdt": money(base_value + quote_total),
+            "price": float(base_price),
+        }
+    )
+    return payload
 
 
 @app.get("/api/ai/signal")
 async def ai_signal() -> dict[str, Any]:
     market_payload = await market()
     return market_payload["signal"]
+
+
+@app.post("/api/ai/chat")
+async def ai_chat(request: AiChatRequest) -> dict[str, Any]:
+    signal = await ai_signal()
+    config = read_bot_config(bot_config_defaults())
+    answer = build_ai_chat_answer(request.question, signal, config)
+    return {"answer": answer, "signal": signal, "botConfig": config.model_dump()}
 
 
 @app.post("/api/ai/execute")
@@ -384,7 +410,7 @@ async def update_bot_config(config: BotConfig) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=f"Daily budget must be <= AI_DAILY_BUDGET_USDT ({max_daily_budget})")
 
     saved = write_bot_config(config)
-    return saved.model_dump()
+    return {**saved.model_dump(), "storage": storage_status()}
 
 
 async def bot_loop() -> None:
@@ -449,7 +475,12 @@ def log_bot_run(trigger: str, payload: dict[str, Any]) -> None:
 
 
 @app.get("/api/orders/history")
-async def order_history() -> dict[str, Any]:
+async def order_history(
+    side: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    source: str | None = Query(default=None),
+    limit: int = Query(default=30, ge=1, le=200),
+) -> dict[str, Any]:
     client = make_client()
     current_price: Decimal | None = None
     try:
@@ -457,7 +488,26 @@ async def order_history() -> dict[str, Any]:
         current_price = d(ticker.get("price"))
     except BinanceError:
         current_price = None
-    return {"summary": summarize_history(current_price), "orders": read_history()}
+    return {
+        "summary": summarize_history(current_price),
+        "orders": read_history(side=side, status=status, source=source, limit=limit),
+    }
+
+
+@app.get("/api/portfolio/history")
+async def portfolio_history(limit: int = Query(default=50, ge=2, le=200)) -> dict[str, Any]:
+    rows = read_portfolio_history(limit=limit)
+    latest = rows[0] if rows else None
+    oldest = rows[-1] if rows else None
+    change = None
+    change_pct = None
+    if latest and oldest:
+        latest_value = d(latest.get("totalValueUsdt"))
+        oldest_value = d(oldest.get("totalValueUsdt"))
+        change_value = latest_value - oldest_value
+        change = money(change_value)
+        change_pct = float(((change_value / oldest_value) * Decimal("100")).quantize(Decimal("0.01"))) if oldest_value > 0 else None
+    return {"items": rows, "summary": {"changeUsdt": change, "changePct": change_pct, "count": len(rows)}}
 
 
 @app.post("/api/orders")
@@ -652,6 +702,58 @@ def evaluate_bot_rules(signal: dict[str, Any], config: BotConfig) -> dict[str, A
             return {"allowed": False, "reason": "SELL is too close to support."}
 
     return {"allowed": True, "reason": "Bot Rules passed."}
+
+
+def build_ai_chat_answer(question: str, signal: dict[str, Any], config: BotConfig) -> str:
+    plan = signal.get("tradePlan") or {}
+    indicators = signal.get("indicators") or {}
+    decision = signal.get("decision", "WAIT")
+    confidence = float(signal.get("confidence") or 0)
+    support = plan.get("support")
+    resistance = plan.get("resistance")
+    current = plan.get("currentPrice")
+    entry_low = plan.get("entryLow")
+    entry_high = plan.get("entryHigh")
+    stop_loss = plan.get("stopLoss")
+    take_profit_1 = plan.get("takeProfit1")
+    take_profit_2 = plan.get("takeProfit2")
+
+    lower_question = question.lower()
+    focus = "ภาพรวม"
+    if any(word in lower_question for word in ["buy", "ซื้อ", "entry", "เข้า"]):
+        focus = "จังหวะซื้อ"
+    elif any(word in lower_question for word in ["sell", "ขาย", "exit", "ออก"]):
+        focus = "จังหวะขาย"
+    elif any(word in lower_question for word in ["risk", "เสี่ยง", "stop", "sl"]):
+        focus = "ความเสี่ยง"
+    elif any(word in lower_question for word in ["bot", "rule", "บอท"]):
+        focus = "Bot Rules"
+
+    reasons = signal.get("reasons") or []
+    reason_text = " ".join(str(item) for item in reasons[:2]) if reasons else "สัญญาณยังมีข้อมูลจำกัด"
+    bot_state = "เปิด" if config.enabled else "ปิด"
+    dry_run_state = "dry-run" if config.dryRunOnly else "live-ready"
+
+    return (
+        f"มุมมองเรื่อง {focus}: ตอนนี้ AI Signal เป็น {decision} "
+        f"ความมั่นใจประมาณ {confidence:.0%}. ราคาปัจจุบัน {format_price(current)}, "
+        f"แนวรับ {format_price(support)}, แนวต้าน {format_price(resistance)}. "
+        f"โซนเข้า {format_price(entry_low)} - {format_price(entry_high)}, "
+        f"Stop {format_price(stop_loss)}, TP1 {format_price(take_profit_1)}, TP2 {format_price(take_profit_2)}. "
+        f"เหตุผลหลัก: {reason_text}. "
+        f"Bot ตอนนี้ {bot_state}, โหมด {dry_run_state}, min confidence {config.minConfidence:.0%}, "
+        f"BUY size {config.orderUsdt} USDT, daily budget {config.dailyBudgetUsdt} USDT. "
+        "คำตอบนี้เป็นการอธิบายจาก indicator ในระบบ ไม่ใช่คำแนะนำทางการเงิน และควรเช็คกราฟ/สภาพคล่องก่อนส่งเงินจริงเสมอ."
+    )
+
+
+def format_price(value: Any) -> str:
+    if value is None:
+        return "--"
+    try:
+        return f"{float(value):,.2f} USDT"
+    except (TypeError, ValueError):
+        return "--"
 
 
 def calculate_symbol_pnl(trades: list[dict[str, Any]], current_price: Decimal, account_base: Decimal) -> dict[str, Any]:
