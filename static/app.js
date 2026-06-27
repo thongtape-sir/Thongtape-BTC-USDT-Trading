@@ -247,7 +247,15 @@ function renderSignal(signal) {
   $("ma30Value").textContent = `MA30 ${formatUsd(indicators.ma30, 2)}`;
   $("ma99Value").textContent = `MA99 ${formatUsd(indicators.ma99, 2)}`;
   $("atrValue").textContent = `ATR ${formatUsd(indicators.atr14, 2)}`;
+  $("regimeValue").textContent = `Regime ${formatSignalText(indicators.marketRegime)}`;
+  $("volumeRatioValue").textContent = `Volume ${formatNumber(indicators.volumeRatio20, 2)}x`;
+  $("strategyTags").textContent = `Strategy ${(signal.strategyTags || []).map(formatSignalText).join(", ") || "--"}`;
   drawCandles();
+}
+
+function formatSignalText(value) {
+  if (!value) return "--";
+  return String(value).replaceAll("_", " ");
 }
 
 async function loadBotConfig() {
